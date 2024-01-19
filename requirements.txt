@@ -1,3 +1,4 @@
 python-dotenv
 mysql-connector-python
 requests
+beautifulsoup4
