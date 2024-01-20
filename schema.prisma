@@ -1,7 +1,7 @@
 generator client {
   provider                    = "prisma-client-py"
-  enable_experimental_decimal = "true"
   recursive_type_depth        = "5"
+  enable_experimental_decimal = "true"
 }
 
 datasource db {
@@ -26,8 +26,8 @@ model Item {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   itemHashName    String   @unique
-  itemName        String   @unique
-  itemIcon        String   @unique @db.VarChar(256)
+  itemName        String
+  itemIcon        String   @db.VarChar(256)
   highestBuyOrder Decimal?
   lowestSellOrder Decimal?
   itemCurrency    String?

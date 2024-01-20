@@ -115,14 +115,17 @@ class PopulateItems:
                             logging.warning("Failed to insert item into database!")
                             """Do nothing else for now, just skip"""
 
+                        logging.info("Sleeping for 10 seconds!")
                         sleep(10)
                         
                     except Exception:
                         logging.exception(f"An error occured when doing an item market request")
+                        logging.info("Sleeping for 60 seconds!")
                         sleep(60)
 
             except Exception:
                 logging.exception(f"An error occured when doing an item batch request")
+                logging.info("Sleeping for 60 seconds!")
                 sleep(60)
                 continue
 
