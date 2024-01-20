@@ -3,3 +3,6 @@
 
 # Log files
 *.log
+
+# Python
+__pycache__

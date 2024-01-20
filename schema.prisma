@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-py"
+  recursive_type_depth = 5
+  enable_experimental_decimal = true
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+  relationMode = "prisma"
+}
+
+model App {
+  appId  Int @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  appName String @unique
+  appIcon String @unique
+  appDescription String @db.Text
+  appWebsite String?
+  items Item[]
+}
+
+model Item {  
+  itemNameId Int  @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  itemHashName  String 
+  itemName  String @unique
+  itemIcon  String @unique
+  highestBuyOrder Decimal?
+  lowestSellOrder Decimal?
+  itemCurrency String?
+  dayVolume Int?
+  totalVolume Int?
+  game App @relation(fields: [gameId], references: [appId])
+  gameId Int
+  itemHistory Price[]
+
+  @@index([gameId])
+}
+
+model Price {
+  id Int @id @default(autoincrement())
+  date DateTime 
+  price Decimal
+  volume Int
+  item Item @relation(fields: [itemId], references: [itemNameId])
+  itemId Int
+
+  @@index([itemId])
+}

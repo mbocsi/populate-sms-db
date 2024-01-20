@@ -1,24 +1,17 @@
-import os
-import mysql.connector as mysql
-from dotenv import load_dotenv
 from dataclasses import dataclass
 import requests
 from time import sleep
 import logging
 from bs4 import BeautifulSoup
+from prisma import Prisma
+import asyncio
 
-load_dotenv()
-logging.basicConfig(level=logging.INFO, filename="main.log", encoding="utf-8", format="%(asctime)s %(message)s" )
-
-DB_HOST = os.getenv("DB_HOST")
-DB_USERNAME = os.getenv("DB_USERNAME")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_DATABASE = os.getenv("DB_DATABASE")
+logging.basicConfig(level=logging.INFO, filename="main.log", encoding="utf-8", format="%(asctime)s :: %(levelname)-8s :: %(message)s" )
 
 ITEMS_URL = "https://steamcommunity.com/market/search/render"
 ITEM_PAGE_URL = "https://steamcommunity.com/market/listings"
 
-@dataclass(slots=1)
+@dataclass
 class Item:
     itemNameId: int
     itemHashName: str
@@ -27,43 +20,42 @@ class Item:
     gameId: int
 
 class PopulateItems:
-    def __init__(self, appId : int, start_index : int = 0, page_size : int = 100):
+    def __init__(self, appId : int, start_index : int = 0, page_size : int = 100) -> None:
         try:
-            self.connection = mysql.connect(host=DB_HOST, user=DB_USERNAME, password=DB_PASSWORD, database=DB_DATABASE)
-            logging.info(f"Connected to database!")
+            self.db = Prisma()
+            logging.info(f"Database object instantiation success!")
         except Exception as e:
-            logging.critical(f"Unable to connect to database: {e}")
+            logging.exception(f"Unable to instantiate database object!")
             exit(1)
         self.start_index = start_index
         self.page_size = page_size
         self.appId = appId
     
-    def add_item(self, data: Item) -> bool:
+    async def add_item(self, data: Item) -> bool:
         logging.info(f"Adding the item to database! {data}")
         try:
-            cursor = self.connection.cursor(dictionary=True)
-            cursor.execute(f"""
-                        INSERT INTO Item (itemNameId, itemHashName, itemName, itemIcon, gameId)
-                        VALUES ({data.itemNameId}, "{data.itemHashName}", "{data.itemName}", "{data.itemIcon}", {data.gameId})
-                        """)
-            cursor.close()
+            await self.db.connect()
+            await self.db.item.create(data={**data.__dict__})
             return True
         except Exception as e:
             logging.exception(f"An error occured when inserting into database! -> {data}")
             return False
+        finally:
+            await self.db.disconnect()
+            
     
-    def in_database(self, itemHashName : str) -> bool:
+    async def in_database(self, itemHashName : str) -> bool:
         try:
-            cursor = self.connection.cursor(dictionary=True)
-            cursor.execute(f"SELECT COUNT(*) as num FROM Item WHERE itemHashName = \"{itemHashName}\"")
-            toReturn = cursor.fetchone()['num']
-            logging.debug(toReturn)
-            cursor.close()
-            return toReturn
+            await self.db.connect()
+            count = await self.db.item.count(where={'itemHashName': itemHashName})
+            logging.debug(f"{count=}")
+            return bool(count)
         except Exception as e:
             logging.exception("An exception occured when checking for item in database!")
+        finally:
+            await self.db.disconnect()
     
-    def populate_items(self):
+    async def populate_items(self) -> None:
         while True:
             try:
                 res = requests.get(ITEMS_URL, params={
@@ -84,12 +76,16 @@ class PopulateItems:
                 
                 results = res_json["results"]
                 logging.info(f"Items {self.start_index} to {self.start_index + self.page_size} received")
+
+                if len(results) == 0: # Results is empty
+                    """Exit the loop/program!"""
+                    break
                 
                 for item in results:
                     try:
                         hashName = item["hash_name"]
 
-                        if self.in_database(hashName):
+                        if await self.in_database(hashName):
                             logging.info(f"{hashName} already in database! Skipping!")
                             continue
 
@@ -107,7 +103,7 @@ class PopulateItems:
                         logging.debug(f"Script content: {script}")
 
                         idx = script.find("Market_LoadOrderSpread")
-                        script = script[idx+25:]
+                        script = script[idx+23:]
                         idx = script.find(")")
                         script = script[:idx]
                         script = script.strip()
@@ -115,37 +111,28 @@ class PopulateItems:
                         logging.debug(f"Found ItemNameId: {itemNameId}")
 
                         marketItem = Item(itemNameId, hashName, item['name'], item['asset_description']['icon_url'], item['asset_description']['appid'])
-                        if not self.add_item(marketItem):
+                        if not await self.add_item(marketItem):
                             logging.warning("Failed to insert item into database!")
                             """Do nothing else for now, just skip"""
 
                         sleep(10)
                         
-                    except Exception as e:
+                    except Exception:
                         logging.exception(f"An error occured when doing an item market request")
                         sleep(60)
 
-
-
-            except Exception as e:
+            except Exception:
                 logging.exception(f"An error occured when doing an item batch request")
                 sleep(60)
                 continue
-            
-            if len(results) == 0: # Results is empty
-                break
 
             self.start_index += self.page_size
         
         logging.info("Script finished!")
 
-
-
-
-
-def main():
+def main() -> None:
     itemPopulator = PopulateItems(730)
-    itemPopulator.populate_items()
+    asyncio.run(itemPopulator.populate_items())
 
 if __name__ == "__main__":
     main()
