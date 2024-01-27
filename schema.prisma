@@ -37,7 +37,7 @@ model Item {
   game            App      @relation(fields: [gameId], references: [appId])
   itemHistory     Price[]
 
-  @@index([gameId])
+  @@index([gameId, itemHashName])
 }
 
 model Price {
