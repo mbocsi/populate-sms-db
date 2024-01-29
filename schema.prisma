@@ -48,5 +48,6 @@ model Price {
   volume Int
   item   Item     @relation(fields: [itemId], references: [itemNameId])
 
+  @@unique([itemId, date])
   @@index([itemId])
 }

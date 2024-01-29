@@ -5,10 +5,13 @@ import logging
 from bs4 import BeautifulSoup
 from prisma import Prisma
 import asyncio
+import os
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.INFO, filename="main.log", encoding="utf-8", format="%(asctime)s :: %(levelname)-8s :: %(message)s" )
 
 ITEMS_URL = "https://steamcommunity.com/market/search/render"
+HISTORY_URL = "https://steamcommunity.com/market/pricehistory"
 ITEM_PAGE_URL = "https://steamcommunity.com/market/listings"
 
 @dataclass
@@ -18,6 +21,13 @@ class Item:
     itemName: str
     itemIcon: str
     gameId: int
+
+@dataclass
+class Price:
+    date: datetime
+    price : float
+    itemId: str
+    volume: int
 
 class PopulateItems:
     def __init__(self, appId : int, start_index : int = 0, page_size : int = 100) -> None:
@@ -52,6 +62,31 @@ class PopulateItems:
             return bool(count)
         except Exception as e:
             logging.exception("An exception occured when checking for item in database!")
+        finally:
+            await self.db.disconnect()
+    
+    async def get_items(self, start : int, count : int) -> list[Item] | bool:
+        try:
+            await self.db.connect()
+            items = await self.db.item.find_many(skip=start, take=count, where={});
+            logging.debug(f"{len(items)=}")
+            return items
+        except Exception as e:
+            logging.exception("An exception occured when checking for items in database!")
+            return False
+        finally:
+            await self.db.disconnect()
+    
+    async def insert_price_history(self, history : list[Price], time_limit : timedelta) -> bool:
+        try:
+            await self.db.connect()
+            to_add = filter(lambda x: datetime.utcnow() - x.date <= time_limit, history)
+            await self.db.price.create_many(data=[i.__dict__ for i in to_add])
+            logging.debug(f"Added into database: \n{history}")
+            return True
+        except Exception as e:
+            logging.exception("An exception occured when inserting price history into database!")
+            return False
         finally:
             await self.db.disconnect()
     
@@ -132,10 +167,63 @@ class PopulateItems:
             self.start_index += self.page_size
         
         logging.info("Script finished!")
+    
+    async def populate_history(self, steamLoginSecure : str, time_limit : timedelta) -> None:
+        start = 0
+        count = 100
+        while(1):
+            logging.info(f"Getting items {start} to {start+count} from database!")
+            items = await self.get_items(start, count)
+            if not items:
+                logging.warning(f"Error when getting items from db! Sleeping 5 seconds!")
+                sleep(5)
+                continue
+            if len(items) == 0:
+                break
+            for item in items:
+                try:
+                    logging.info(f"Processing {item.itemHashName}")
+                    res = requests.get(HISTORY_URL, params={
+                        "currency": 1,
+                        "appid": self.appId,
+                        "market_hash_name": item.itemHashName
+                    }, cookies={"steamLoginSecure": steamLoginSecure})
+                    logging.debug(f"Requested {res.request}")
+                    if res.status_code != 200:
+                        raise Exception(f"Status code for {HISTORY_URL} was {res.status_code}")
+                    
+                    res_json = res.json()
+                    logging.debug(f"Response JSON: {res_json}")
+                    if not res_json['success']:
+                        raise Exception(f"Success field was false")
+                    
+                    history = res_json["prices"]
+
+                    prices = [Price(datetime.strptime(price[0], "%b %d %Y %H: +%M"), price[1], item.itemNameId, int(price[2])) for price in history]
+
+                    if(not await self.insert_price_history(prices, time_limit)):
+                        logging.warning("Failed to insert price history into database! Sleeping 3 seconds!")
+                    else:
+                        logging.info(f"Added price history for {item.itemHashName}! Sleeping 3 seconds!")
+                    sleep(3)
+                except Exception:
+                    logging.exception(f"An error occured when doing an item history request")
+                    logging.info("Sleeping for 60 seconds!")
+                    sleep(60)
+                    continue
+            
+            start+=count
+
+async def delete(item):
+    await item.db.connect()
+    await item.db.price.delete_many(where={})
+    await item.db.disconnect()
 
 def main() -> None:
     itemPopulator = PopulateItems(730)
-    asyncio.run(itemPopulator.populate_items())
+    # asyncio.run(delete(itemPopulator))
+    # asyncio.run(itemPopulator.populate_items())
+    asyncio.run(itemPopulator.populate_history(os.getenv("STEAM_LOGIN_SECURE"), timedelta(days=365)))
 
 if __name__ == "__main__":
     main()
